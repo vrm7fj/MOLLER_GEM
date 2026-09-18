@@ -76,6 +76,14 @@ void FillVectors(TChain *C, ADCData &data) {
   TString br_isU[NMOD], br_mpd[NMOD], br_adcid[NMOD], br_adcsamp[NMOD], br_iapv[NMOD], br_tfine[NMOD];
   TString cnt_strip[NMOD], cnt_adcsamp[NMOD], cnt_apv[NMOD];
 
+  // Per-module: are strip.iAPV and time.Tfine_by_APV actually present in
+  // this tree? Both need to exist for trigger-phase info to mean anything
+  // for that module -- if either is missing (decoder not yet rebuilt with
+  // the strip.iAPV patch, or the odef time.* block not on for that
+  // module), we deliberately skip filling phase for it rather than
+  // silently reading a stale/zeroed buffer as if it were real data.
+  bool havePhaseInfo[NMOD];
+
   for (int imod = 0; imod < NMOD; imod++) {
 
     TString pfx = Form("%s%d.", modbase, imod);
@@ -89,12 +97,26 @@ void FillVectors(TChain *C, ADCData &data) {
 
     cnt_strip[imod]   = GetLeafCountBranchName(C, br_isU[imod].Data());
     cnt_adcsamp[imod] = GetLeafCountBranchName(C, br_adcsamp[imod].Data());
-    cnt_apv[imod]     = GetLeafCountBranchName(C, br_tfine[imod].Data());
+
+    bool haveIAPV  = (C->GetBranch(br_iapv[imod].Data())  != nullptr);
+    bool haveTfine = (C->GetBranch(br_tfine[imod].Data()) != nullptr);
+    havePhaseInfo[imod] = haveIAPV && haveTfine;
+
+    cnt_apv[imod] = haveTfine ? GetLeafCountBranchName(C, br_tfine[imod].Data()) : "";
 
     std::cout << "Module " << imod << " leafcount branches found:" << std::endl
               << "  " << br_isU[imod]     << " -> " << cnt_strip[imod]   << std::endl
-              << "  " << br_adcsamp[imod] << " -> " << cnt_adcsamp[imod] << std::endl
-              << "  " << br_tfine[imod]   << " -> " << cnt_apv[imod]     << std::endl;
+              << "  " << br_adcsamp[imod] << " -> " << cnt_adcsamp[imod] << std::endl;
+
+    if (havePhaseInfo[imod]) {
+      std::cout << "  " << br_tfine[imod] << " -> " << cnt_apv[imod] << std::endl;
+    } else {
+      std::cout << "  " << br_iapv[imod] << " / " << br_tfine[imod]
+                << " -> NOT FOUND in tree; trigger-phase histograms will be"
+                << " skipped for module " << imod << " (apply the strip.iAPV"
+                << " decoder patch, uncomment the odef time.* block for this"
+                << " module, and re-replay to enable them)." << std::endl;
+    }
   }
 
   // ----------------------------------------------------------
@@ -127,22 +149,31 @@ void FillVectors(TChain *C, ADCData &data) {
     C->SetBranchStatus(br_mpd[imod], 1);
     C->SetBranchStatus(br_adcid[imod], 1);
     C->SetBranchStatus(br_adcsamp[imod], 1);
-    C->SetBranchStatus(br_iapv[imod], 1);
-    C->SetBranchStatus(br_tfine[imod], 1);
     if (cnt_strip[imod].Length())   C->SetBranchStatus(cnt_strip[imod], 1);
     if (cnt_adcsamp[imod].Length()) C->SetBranchStatus(cnt_adcsamp[imod], 1);
-    if (cnt_apv[imod].Length())     C->SetBranchStatus(cnt_apv[imod], 1);
 
     C->SetBranchAddress(br_isU[imod], strip_isU[imod]);
     C->SetBranchAddress(br_mpd[imod], strip_mpd[imod]);
     C->SetBranchAddress(br_adcid[imod], strip_adcid[imod]);
     C->SetBranchAddress(br_adcsamp[imod], adcsamples[imod]);
-    C->SetBranchAddress(br_iapv[imod], strip_iapv[imod]);
-    C->SetBranchAddress(br_tfine[imod], tfine_by_apv[imod]);
 
     if (cnt_strip[imod].Length())   C->SetBranchAddress(cnt_strip[imod], &n_strip[imod]);
     if (cnt_adcsamp[imod].Length()) C->SetBranchAddress(cnt_adcsamp[imod], &n_adcsamp[imod]);
-    if (cnt_apv[imod].Length())     C->SetBranchAddress(cnt_apv[imod], &n_apv[imod]);
+
+    // Only touch strip.iAPV / time.Tfine_by_APV if both actually exist for
+    // this module -- SetBranchStatus/SetBranchAddress on a nonexistent
+    // branch just prints an error and leaves the buffer untouched (stuck
+    // at 0), which would otherwise look like a valid iAPV=0 for every
+    // strip instead of "no data".
+    if (havePhaseInfo[imod]) {
+      C->SetBranchStatus(br_iapv[imod], 1);
+      C->SetBranchStatus(br_tfine[imod], 1);
+      if (cnt_apv[imod].Length()) C->SetBranchStatus(cnt_apv[imod], 1);
+
+      C->SetBranchAddress(br_iapv[imod], strip_iapv[imod]);
+      C->SetBranchAddress(br_tfine[imod], tfine_by_apv[imod]);
+      if (cnt_apv[imod].Length()) C->SetBranchAddress(cnt_apv[imod], &n_apv[imod]);
+    }
   }
 
   // ----------------------------------------------------------
@@ -202,14 +233,18 @@ void FillVectors(TChain *C, ADCData &data) {
 
           // Trigger phase: strip.iAPV indexes straight into this module's
           // time.Tfine_by_APV array. -1 means "no valid timing info this
-          // event" (shouldn't normally happen, but guard against it).
-          int iapv = (int) strip_iapv[imod][istrip];
+          // event" -- either the branches aren't in the tree for this
+          // module at all (havePhaseInfo[imod] false), or strip.iAPV came
+          // back out of range for this particular strip/event.
           int phase = -1;
-          if (iapv >= 0 && iapv < napv) {
-            phase = ((int) tfine_by_apv[imod][iapv]) % NPHASE;
-            if (phase < 0) phase += NPHASE; // just in case of sign weirdness
-          } else {
-            nskipped_badapv++;
+          if (havePhaseInfo[imod]) {
+            int iapv = (int) strip_iapv[imod][istrip];
+            if (iapv >= 0 && iapv < napv) {
+              phase = ((int) tfine_by_apv[imod][iapv]) % NPHASE;
+              if (phase < 0) phase += NPHASE; // just in case of sign weirdness
+            } else {
+              nskipped_badapv++;
+            }
           }
 
           for (int isamp = 0; isamp < NSAMP; isamp++) {
