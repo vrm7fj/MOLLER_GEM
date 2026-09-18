@@ -22,6 +22,8 @@ struct ADCData {
 
   std::vector<int>    isamp; // which of the 6 raw ADC samples (0-5)
   std::vector<int>    isU;   // 1 = U/X strip, 0 = V/Y strip (from strip.IsU)
+  std::vector<int>    apv;   // APV card id = (mpd<<4 | adc_id), same convention
+                              // as "effChan" in MOLLERGEMModule.cxx
   std::vector<double> adc;   // ADC value at that sample (strip.ADCsamples)
 
 };
@@ -65,6 +67,8 @@ void FillVectors(TChain *C, ADCData &data) {
   TString pfx = modprefix;
 
   TString br_isU     = pfx + "strip.IsU";
+  TString br_mpd     = pfx + "strip.mpd";
+  TString br_adcid   = pfx + "strip.adc_id";
   TString br_adcsamp = pfx + "strip.ADCsamples";
 
   TString cnt_strip   = GetLeafCountBranchName(C, br_isU.Data());
@@ -79,6 +83,8 @@ void FillVectors(TChain *C, ADCData &data) {
   // ----------------------------------------------------------
 
   Double_t strip_isU[MAXSTRIP];
+  Double_t strip_mpd[MAXSTRIP];
+  Double_t strip_adcid[MAXSTRIP];
   Int_t    n_strip = 0;
 
   Double_t adcsamples[MAXADC];
@@ -91,6 +97,8 @@ void FillVectors(TChain *C, ADCData &data) {
   C->SetBranchStatus("*", 0);
 
   C->SetBranchStatus(br_isU, 1);
+  C->SetBranchStatus(br_mpd, 1);
+  C->SetBranchStatus(br_adcid, 1);
   C->SetBranchStatus(br_adcsamp, 1);
   if (cnt_strip.Length())   C->SetBranchStatus(cnt_strip, 1);
   if (cnt_adcsamp.Length()) C->SetBranchStatus(cnt_adcsamp, 1);
@@ -100,6 +108,8 @@ void FillVectors(TChain *C, ADCData &data) {
   // ----------------------------------------------------------
 
   C->SetBranchAddress(br_isU, strip_isU);
+  C->SetBranchAddress(br_mpd, strip_mpd);
+  C->SetBranchAddress(br_adcid, strip_adcid);
   C->SetBranchAddress(br_adcsamp, adcsamples);
 
   if (cnt_strip.Length())   C->SetBranchAddress(cnt_strip, &n_strip);
@@ -150,12 +160,16 @@ void FillVectors(TChain *C, ADCData &data) {
 
       for (int istrip = 0; istrip < nstrip; istrip++) {
 
-        int isU = (strip_isU[istrip] != 0) ? 1 : 0;
+        int isU  = (strip_isU[istrip] != 0) ? 1 : 0;
+        int mpd  = (int) strip_mpd[istrip];
+        int adcid = (int) strip_adcid[istrip];
+        int apv  = (mpd << 4) | adcid; // same convention as "effChan" in the decoder
 
         for (int isamp = 0; isamp < NSAMP; isamp++) {
 
           data.isamp.push_back(isamp);
           data.isU.push_back(isU);
+          data.apv.push_back(apv);
           data.adc.push_back(adcsamples[isamp + NSAMP*istrip]);
 
         }

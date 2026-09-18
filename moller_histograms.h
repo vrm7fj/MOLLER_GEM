@@ -4,32 +4,22 @@
 #include "TProfile.h"
 #include "TString.h"
 
+#include <map>
+
 #include "moller_fill_vectors.h"
 #include "moller_config.h"
 
 struct ADCHistograms {
 
-  TProfile *h_ADC_vs_sample_U; // <ADC> vs time sample, U/X strips
-  TProfile *h_ADC_vs_sample_V; // <ADC> vs time sample, V/Y strips
+  // keyed by apv = (mpd<<4 | adc_id); one U profile + one V profile per APV
+  std::map<int, TProfile*> h_ADC_vs_sample_U;
+  std::map<int, TProfile*> h_ADC_vs_sample_V;
 
 };
 
 ADCHistograms CreateHistograms() {
 
-  ADCHistograms hist;
-
-  hist.h_ADC_vs_sample_U = new TProfile(
-    "h_ADC_vs_sample_U",
-    "ADC vs time sample;time sample;<ADC>",
-    NSAMP, -0.5, NSAMP-0.5
-  );
-
-  hist.h_ADC_vs_sample_V = new TProfile(
-    "h_ADC_vs_sample_V",
-    "ADC vs time sample;time sample;<ADC>",
-    NSAMP, -0.5, NSAMP-0.5
-  );
-
+  ADCHistograms hist; // both maps start empty; filled lazily in FillHistograms
   return hist;
 }
 
@@ -37,11 +27,26 @@ void FillHistograms(const ADCData &data, ADCHistograms &hist) {
 
   for (size_t i = 0; i < data.adc.size(); i++) {
 
-    if (data.isU[i]) {
-      hist.h_ADC_vs_sample_U->Fill(data.isamp[i], data.adc[i]);
-    } else {
-      hist.h_ADC_vs_sample_V->Fill(data.isamp[i], data.adc[i]);
+    int apv = data.apv[i];
+
+    int mpd   = apv >> 4;   // mpd_id can exceed 15, so no mask here
+    int adcid = apv & 0xF;  // adc_id is 0-15 (4 bits), matches decoder's effChan encoding
+
+    std::map<int, TProfile*> &target = data.isU[i] ? hist.h_ADC_vs_sample_U
+                                                     : hist.h_ADC_vs_sample_V;
+
+    if (target.find(apv) == target.end()) {
+
+      const char *axisname = data.isU[i] ? "U" : "V";
+
+      target[apv] = new TProfile(
+        Form("h_ADC_vs_sample_apv%d_%s", apv, axisname),
+        Form("APV mpd=%d adc_id=%d (%s);time sample;<ADC>", mpd, adcid, axisname),
+        NSAMP, -0.5, NSAMP-0.5
+      );
     }
+
+    target[apv]->Fill(data.isamp[i], data.adc[i]);
   }
 }
 
