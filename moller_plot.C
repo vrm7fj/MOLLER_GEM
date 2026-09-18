@@ -17,6 +17,7 @@ void moller_plot() {
 
   gStyle->SetOptStat(0);
   gStyle->SetTitleFontSize(0.09);
+  gStyle->SetPalette(kRainBow);
 
   // ==========================================================
   // Create chain
@@ -50,28 +51,32 @@ void moller_plot() {
   std::cout << "Number of distinct modules found: " << mods.size() << std::endl;
 
   // ==========================================================
-  // ROOT output
+  // ROOT output -- both the ADC-vs-sample profiles and the
+  // pulse-shape-vs-phase profiles go in the same file.
   // ==========================================================
 
   TFile *fout = new TFile("moller_adc_uv_output.root", "RECREATE");
 
-  for (auto &modkv : hist.h_ADC_vs_sample_U)
-    for (auto &kv : modkv.second) kv.second->Write();
-  for (auto &modkv : hist.h_ADC_vs_sample_V)
-    for (auto &kv : modkv.second) kv.second->Write();
+  for (auto &modkv : hist.h_ADC_vs_sample_U) for (auto &kv : modkv.second) kv.second->Write();
+  for (auto &modkv : hist.h_ADC_vs_sample_V) for (auto &kv : modkv.second) kv.second->Write();
+  for (auto &modkv : hist.h_pulseshape_vs_phase_U) for (auto &kv : modkv.second) kv.second->Write();
+  for (auto &modkv : hist.h_pulseshape_vs_phase_V) for (auto &kv : modkv.second) kv.second->Write();
 
   fout->Close();
 
   // ==========================================================
-  // PDF output: one page per (module, MPD). Each MPD normally serves
-  // 10 APVs (5 reading U strips, 5 reading V strips) -- top row = U
-  // APVs, bottom row = V APVs, both sorted by adc_id. If a given MPD
-  // has more than 5 on one axis, the grid widens to fit; if fewer,
-  // the unused pads are just left blank. Modules are paged through
-  // in ascending order, each with its own set of MPD pages.
+  // PDF output: for each (module, MPD), two consecutive pages --
+  //   page 1: <ADC> vs time sample (5x2 grid, U top/V bottom, as before)
+  //   page 2: <ADC> vs (time sample, trigger phase) for the same 10 APVs,
+  //           same grid position, drawn COLZ. A flat, horizontal-band
+  //           pattern means the pulse shape doesn't depend on trigger
+  //           phase; a pattern that tilts/shifts across phase bins means
+  //           there's a real sub-sample timing offset for that APV.
+  // Each MPD normally serves 10 APVs (5 U, 5 V); the grid widens if a
+  // given MPD has more than 5 on one axis.
   // ==========================================================
 
-  TCanvas *c1 = new TCanvas("c1", "ADC vs time sample by module/MPD", 1300, 500);
+  TCanvas *c1 = new TCanvas("c1", "ADC vs time sample / trigger phase, by module/MPD", 1300, 500);
 
   c1->Print("moller_adc_uv_output.pdf[");
 
@@ -101,6 +106,8 @@ void moller_plot() {
 
       int ncols = (int) std::max((size_t)5, std::max(uApvs.size(), vApvs.size()));
 
+      // ---- page 1: ADC vs sample ----
+
       c1->Clear();
       c1->Divide(ncols, 2);
 
@@ -124,7 +131,32 @@ void moller_plot() {
         h->Draw("E1");
       }
 
-      c1->Print("moller_adc_uv_output.pdf", Form("Title:Module %d, MPD %d", imod, mpd));
+      c1->Print("moller_adc_uv_output.pdf", Form("Title:Module %d, MPD %d -- ADC vs sample", imod, mpd));
+
+      // ---- page 2: ADC vs (sample, trigger phase), same layout ----
+
+      bool havePhaseU = hist.h_pulseshape_vs_phase_U.count(imod) > 0;
+      bool havePhaseV = hist.h_pulseshape_vs_phase_V.count(imod) > 0;
+
+      if (havePhaseU || havePhaseV) {
+
+        c1->Clear();
+        c1->Divide(ncols, 2);
+
+        for (size_t i = 0; i < uApvs.size(); i++) {
+          if (!havePhaseU || !hist.h_pulseshape_vs_phase_U[imod].count(uApvs[i])) continue;
+          c1->cd(i + 1);
+          hist.h_pulseshape_vs_phase_U[imod][uApvs[i]]->Draw("COLZ");
+        }
+
+        for (size_t i = 0; i < vApvs.size(); i++) {
+          if (!havePhaseV || !hist.h_pulseshape_vs_phase_V[imod].count(vApvs[i])) continue;
+          c1->cd(ncols + i + 1);
+          hist.h_pulseshape_vs_phase_V[imod][vApvs[i]]->Draw("COLZ");
+        }
+
+        c1->Print("moller_adc_uv_output.pdf", Form("Title:Module %d, MPD %d -- ADC vs sample/phase", imod, mpd));
+      }
     }
   }
 

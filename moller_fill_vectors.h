@@ -26,6 +26,9 @@ struct ADCData {
   std::vector<int>    apv;   // APV card id = (mpd<<4 | adc_id) within that
                               // module, same convention as "effChan" in
                               // MOLLERGEMModule.cxx
+  std::vector<int>    phase; // trigger phase for that strip's APV, this event
+                              // (time.Tfine_by_APV[strip.iAPV] % NPHASE);
+                              // -1 if no valid timing info this event
   std::vector<double> adc;   // ADC value at that sample (strip.ADCsamples)
 
 };
@@ -70,8 +73,8 @@ void FillVectors(TChain *C, ADCData &data) {
   // Build per-module branch names and look up their leafcounts
   // ----------------------------------------------------------
 
-  TString br_isU[NMOD], br_mpd[NMOD], br_adcid[NMOD], br_adcsamp[NMOD];
-  TString cnt_strip[NMOD], cnt_adcsamp[NMOD];
+  TString br_isU[NMOD], br_mpd[NMOD], br_adcid[NMOD], br_adcsamp[NMOD], br_iapv[NMOD], br_tfine[NMOD];
+  TString cnt_strip[NMOD], cnt_adcsamp[NMOD], cnt_apv[NMOD];
 
   for (int imod = 0; imod < NMOD; imod++) {
 
@@ -81,13 +84,17 @@ void FillVectors(TChain *C, ADCData &data) {
     br_mpd[imod]     = pfx + "strip.mpd";
     br_adcid[imod]   = pfx + "strip.adc_id";
     br_adcsamp[imod] = pfx + "strip.ADCsamples";
+    br_iapv[imod]    = pfx + "strip.iAPV";          // decoder patch
+    br_tfine[imod]   = pfx + "time.Tfine_by_APV";   // odef time.* block
 
     cnt_strip[imod]   = GetLeafCountBranchName(C, br_isU[imod].Data());
     cnt_adcsamp[imod] = GetLeafCountBranchName(C, br_adcsamp[imod].Data());
+    cnt_apv[imod]     = GetLeafCountBranchName(C, br_tfine[imod].Data());
 
     std::cout << "Module " << imod << " leafcount branches found:" << std::endl
               << "  " << br_isU[imod]     << " -> " << cnt_strip[imod]   << std::endl
-              << "  " << br_adcsamp[imod] << " -> " << cnt_adcsamp[imod] << std::endl;
+              << "  " << br_adcsamp[imod] << " -> " << cnt_adcsamp[imod] << std::endl
+              << "  " << br_tfine[imod]   << " -> " << cnt_apv[imod]     << std::endl;
   }
 
   // ----------------------------------------------------------
@@ -99,10 +106,14 @@ void FillVectors(TChain *C, ADCData &data) {
   static Double_t strip_isU[NMOD][MAXSTRIP];
   static Double_t strip_mpd[NMOD][MAXSTRIP];
   static Double_t strip_adcid[NMOD][MAXSTRIP];
+  static Double_t strip_iapv[NMOD][MAXSTRIP];
   Int_t n_strip[NMOD] = {0};
 
   static Double_t adcsamples[NMOD][MAXADC];
   Int_t n_adcsamp[NMOD] = {0};
+
+  static Double_t tfine_by_apv[NMOD][MAXAPV];
+  Int_t n_apv[NMOD] = {0};
 
   // ----------------------------------------------------------
   // Enable branches / set addresses, module by module
@@ -116,16 +127,22 @@ void FillVectors(TChain *C, ADCData &data) {
     C->SetBranchStatus(br_mpd[imod], 1);
     C->SetBranchStatus(br_adcid[imod], 1);
     C->SetBranchStatus(br_adcsamp[imod], 1);
+    C->SetBranchStatus(br_iapv[imod], 1);
+    C->SetBranchStatus(br_tfine[imod], 1);
     if (cnt_strip[imod].Length())   C->SetBranchStatus(cnt_strip[imod], 1);
     if (cnt_adcsamp[imod].Length()) C->SetBranchStatus(cnt_adcsamp[imod], 1);
+    if (cnt_apv[imod].Length())     C->SetBranchStatus(cnt_apv[imod], 1);
 
     C->SetBranchAddress(br_isU[imod], strip_isU[imod]);
     C->SetBranchAddress(br_mpd[imod], strip_mpd[imod]);
     C->SetBranchAddress(br_adcid[imod], strip_adcid[imod]);
     C->SetBranchAddress(br_adcsamp[imod], adcsamples[imod]);
+    C->SetBranchAddress(br_iapv[imod], strip_iapv[imod]);
+    C->SetBranchAddress(br_tfine[imod], tfine_by_apv[imod]);
 
     if (cnt_strip[imod].Length())   C->SetBranchAddress(cnt_strip[imod], &n_strip[imod]);
     if (cnt_adcsamp[imod].Length()) C->SetBranchAddress(cnt_adcsamp[imod], &n_adcsamp[imod]);
+    if (cnt_apv[imod].Length())     C->SetBranchAddress(cnt_apv[imod], &n_apv[imod]);
   }
 
   // ----------------------------------------------------------
@@ -146,6 +163,8 @@ void FillVectors(TChain *C, ADCData &data) {
 
   int treenum = -1;
   int oldtreenum = -1;
+
+  Long64_t nskipped_badapv = 0;
 
   while (C->GetEntry(nevent)) {
 
@@ -168,10 +187,11 @@ void FillVectors(TChain *C, ADCData &data) {
 
       for (int imod = 0; imod < NMOD; imod++) {
 
-        // Guard against the buffer being smaller than what's actually in
-        // this event (increase MAXSTRIP in moller_config.h if this
-        // clamp is ever hit for real data):
+        // Guard against buffers being smaller than what's actually in this
+        // event (increase MAXSTRIP/MAXAPV in moller_config.h if these
+        // clamps are ever hit for real data):
         int nstrip = std::min(n_strip[imod], MAXSTRIP);
+        int napv   = std::min(n_apv[imod], MAXAPV);
 
         for (int istrip = 0; istrip < nstrip; istrip++) {
 
@@ -180,12 +200,25 @@ void FillVectors(TChain *C, ADCData &data) {
           int adcid = (int) strip_adcid[imod][istrip];
           int apv   = (mpd << 4) | adcid; // same convention as "effChan" in the decoder
 
+          // Trigger phase: strip.iAPV indexes straight into this module's
+          // time.Tfine_by_APV array. -1 means "no valid timing info this
+          // event" (shouldn't normally happen, but guard against it).
+          int iapv = (int) strip_iapv[imod][istrip];
+          int phase = -1;
+          if (iapv >= 0 && iapv < napv) {
+            phase = ((int) tfine_by_apv[imod][iapv]) % NPHASE;
+            if (phase < 0) phase += NPHASE; // just in case of sign weirdness
+          } else {
+            nskipped_badapv++;
+          }
+
           for (int isamp = 0; isamp < NSAMP; isamp++) {
 
             data.isamp.push_back(isamp);
             data.isU.push_back(isU);
             data.imod.push_back(imod);
             data.apv.push_back(apv);
+            data.phase.push_back(phase);
             data.adc.push_back(adcsamples[imod][isamp + NSAMP*istrip]);
 
           }
@@ -199,6 +232,10 @@ void FillVectors(TChain *C, ADCData &data) {
   std::cout << std::endl;
   std::cout << "Total (module,strip,sample) entries collected: "
             << data.adc.size() << std::endl;
+  if (nskipped_badapv > 0) {
+    std::cout << "Strips with no valid strip.iAPV / trigger phase this event: "
+              << nskipped_badapv << std::endl;
+  }
 
   if (GlobalCut) delete GlobalCut;
 }
