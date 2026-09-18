@@ -15,15 +15,17 @@
 
 // ============================================================
 // Structure containing quantities needed after event selection
-// One entry per (strip, sample) pair.
+// One entry per (module, strip, sample) triple.
 // ============================================================
 
 struct ADCData {
 
   std::vector<int>    isamp; // which of the 6 raw ADC samples (0-5)
   std::vector<int>    isU;   // 1 = U/X strip, 0 = V/Y strip (from strip.IsU)
-  std::vector<int>    apv;   // APV card id = (mpd<<4 | adc_id), same convention
-                              // as "effChan" in MOLLERGEMModule.cxx
+  std::vector<int>    imod;  // GEM module index (0 .. NMOD-1)
+  std::vector<int>    apv;   // APV card id = (mpd<<4 | adc_id) within that
+                              // module, same convention as "effChan" in
+                              // MOLLERGEMModule.cxx
   std::vector<double> adc;   // ADC value at that sample (strip.ADCsamples)
 
 };
@@ -64,56 +66,67 @@ void FillVectors(TChain *C, ADCData &data) {
   // Make sure at least one tree is loaded so GetLeaf() below works:
   C->LoadTree(0);
 
-  TString pfx = modprefix;
-
-  TString br_isU     = pfx + "strip.IsU";
-  TString br_mpd     = pfx + "strip.mpd";
-  TString br_adcid   = pfx + "strip.adc_id";
-  TString br_adcsamp = pfx + "strip.ADCsamples";
-
-  TString cnt_strip   = GetLeafCountBranchName(C, br_isU.Data());
-  TString cnt_adcsamp = GetLeafCountBranchName(C, br_adcsamp.Data());
-
-  std::cout << "Leafcount branches found:" << std::endl
-            << "  " << br_isU     << " -> " << cnt_strip   << std::endl
-            << "  " << br_adcsamp << " -> " << cnt_adcsamp << std::endl;
-
   // ----------------------------------------------------------
-  // Branch variables
+  // Build per-module branch names and look up their leafcounts
   // ----------------------------------------------------------
 
-  Double_t strip_isU[MAXSTRIP];
-  Double_t strip_mpd[MAXSTRIP];
-  Double_t strip_adcid[MAXSTRIP];
-  Int_t    n_strip = 0;
+  TString br_isU[NMOD], br_mpd[NMOD], br_adcid[NMOD], br_adcsamp[NMOD];
+  TString cnt_strip[NMOD], cnt_adcsamp[NMOD];
 
-  Double_t adcsamples[MAXADC];
-  Int_t    n_adcsamp = 0;
+  for (int imod = 0; imod < NMOD; imod++) {
+
+    TString pfx = Form("%s%d.", modbase, imod);
+
+    br_isU[imod]     = pfx + "strip.IsU";
+    br_mpd[imod]     = pfx + "strip.mpd";
+    br_adcid[imod]   = pfx + "strip.adc_id";
+    br_adcsamp[imod] = pfx + "strip.ADCsamples";
+
+    cnt_strip[imod]   = GetLeafCountBranchName(C, br_isU[imod].Data());
+    cnt_adcsamp[imod] = GetLeafCountBranchName(C, br_adcsamp[imod].Data());
+
+    std::cout << "Module " << imod << " leafcount branches found:" << std::endl
+              << "  " << br_isU[imod]     << " -> " << cnt_strip[imod]   << std::endl
+              << "  " << br_adcsamp[imod] << " -> " << cnt_adcsamp[imod] << std::endl;
+  }
 
   // ----------------------------------------------------------
-  // Enable branches
+  // Branch variables (one set of buffers per module).
+  // static so these live off the stack -- NMOD*MAXADC doubles adds up
+  // fast once you have more than one module.
+  // ----------------------------------------------------------
+
+  static Double_t strip_isU[NMOD][MAXSTRIP];
+  static Double_t strip_mpd[NMOD][MAXSTRIP];
+  static Double_t strip_adcid[NMOD][MAXSTRIP];
+  Int_t n_strip[NMOD] = {0};
+
+  static Double_t adcsamples[NMOD][MAXADC];
+  Int_t n_adcsamp[NMOD] = {0};
+
+  // ----------------------------------------------------------
+  // Enable branches / set addresses, module by module
   // ----------------------------------------------------------
 
   C->SetBranchStatus("*", 0);
 
-  C->SetBranchStatus(br_isU, 1);
-  C->SetBranchStatus(br_mpd, 1);
-  C->SetBranchStatus(br_adcid, 1);
-  C->SetBranchStatus(br_adcsamp, 1);
-  if (cnt_strip.Length())   C->SetBranchStatus(cnt_strip, 1);
-  if (cnt_adcsamp.Length()) C->SetBranchStatus(cnt_adcsamp, 1);
+  for (int imod = 0; imod < NMOD; imod++) {
 
-  // ----------------------------------------------------------
-  // Set branch addresses
-  // ----------------------------------------------------------
+    C->SetBranchStatus(br_isU[imod], 1);
+    C->SetBranchStatus(br_mpd[imod], 1);
+    C->SetBranchStatus(br_adcid[imod], 1);
+    C->SetBranchStatus(br_adcsamp[imod], 1);
+    if (cnt_strip[imod].Length())   C->SetBranchStatus(cnt_strip[imod], 1);
+    if (cnt_adcsamp[imod].Length()) C->SetBranchStatus(cnt_adcsamp[imod], 1);
 
-  C->SetBranchAddress(br_isU, strip_isU);
-  C->SetBranchAddress(br_mpd, strip_mpd);
-  C->SetBranchAddress(br_adcid, strip_adcid);
-  C->SetBranchAddress(br_adcsamp, adcsamples);
+    C->SetBranchAddress(br_isU[imod], strip_isU[imod]);
+    C->SetBranchAddress(br_mpd[imod], strip_mpd[imod]);
+    C->SetBranchAddress(br_adcid[imod], strip_adcid[imod]);
+    C->SetBranchAddress(br_adcsamp[imod], adcsamples[imod]);
 
-  if (cnt_strip.Length())   C->SetBranchAddress(cnt_strip, &n_strip);
-  if (cnt_adcsamp.Length()) C->SetBranchAddress(cnt_adcsamp, &n_adcsamp);
+    if (cnt_strip[imod].Length())   C->SetBranchAddress(cnt_strip[imod], &n_strip[imod]);
+    if (cnt_adcsamp[imod].Length()) C->SetBranchAddress(cnt_adcsamp[imod], &n_adcsamp[imod]);
+  }
 
   // ----------------------------------------------------------
   // Optional global cut
@@ -153,25 +166,29 @@ void FillVectors(TChain *C, ADCData &data) {
 
     if (passedcut) {
 
-      // Guard against the buffer being smaller than what's actually in
-      // this event (increase MAXSTRIP in moller_config.h if this
-      // clamp is ever hit for real data):
-      int nstrip = std::min(n_strip, MAXSTRIP);
+      for (int imod = 0; imod < NMOD; imod++) {
 
-      for (int istrip = 0; istrip < nstrip; istrip++) {
+        // Guard against the buffer being smaller than what's actually in
+        // this event (increase MAXSTRIP in moller_config.h if this
+        // clamp is ever hit for real data):
+        int nstrip = std::min(n_strip[imod], MAXSTRIP);
 
-        int isU  = (strip_isU[istrip] != 0) ? 1 : 0;
-        int mpd  = (int) strip_mpd[istrip];
-        int adcid = (int) strip_adcid[istrip];
-        int apv  = (mpd << 4) | adcid; // same convention as "effChan" in the decoder
+        for (int istrip = 0; istrip < nstrip; istrip++) {
 
-        for (int isamp = 0; isamp < NSAMP; isamp++) {
+          int isU   = (strip_isU[imod][istrip] != 0) ? 1 : 0;
+          int mpd   = (int) strip_mpd[imod][istrip];
+          int adcid = (int) strip_adcid[imod][istrip];
+          int apv   = (mpd << 4) | adcid; // same convention as "effChan" in the decoder
 
-          data.isamp.push_back(isamp);
-          data.isU.push_back(isU);
-          data.apv.push_back(apv);
-          data.adc.push_back(adcsamples[isamp + NSAMP*istrip]);
+          for (int isamp = 0; isamp < NSAMP; isamp++) {
 
+            data.isamp.push_back(isamp);
+            data.isU.push_back(isU);
+            data.imod.push_back(imod);
+            data.apv.push_back(apv);
+            data.adc.push_back(adcsamples[imod][isamp + NSAMP*istrip]);
+
+          }
         }
       }
     }
@@ -180,7 +197,7 @@ void FillVectors(TChain *C, ADCData &data) {
   }
 
   std::cout << std::endl;
-  std::cout << "Total (strip,sample) entries collected: "
+  std::cout << "Total (module,strip,sample) entries collected: "
             << data.adc.size() << std::endl;
 
   if (GlobalCut) delete GlobalCut;
