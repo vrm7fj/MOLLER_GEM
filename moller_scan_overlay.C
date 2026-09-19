@@ -12,20 +12,13 @@
 #include <algorithm>
 #include <cstdio>
 
-// ============================================================
-// Overlays the per-(module, APV) ADC-vs-sample curves from every point
-// of a database-parameter scan (produced by moller_scan_corrcoeff.sh +
-// moller_scan_fill.C) on the same pad, one color per scan value, same
-// 5x2 module/MPD grid layout as moller_plot.C.
-//
-// EDIT scanFiles/scanLabels below to match what your scan produced --
-// moller_scan_corrcoeff.sh prints the exact list to paste in here at
-// the end of its run.
-// ============================================================
-
+// Overlays the per-(module,APV) ADC-vs-sample curves from every scan
+// point (see moller_scan_corrcoeff.sh / moller_scan_fill.C), one color
+// per value, same 5x2 module/MPD layout as moller_plot.C. Edit
+// scanFiles/scanLabels to match your scan -- the shell script prints
+// the list to paste in.
 void moller_scan_overlay() {
 
-  // ---------------- EDIT THESE ----------------
   std::vector<TString> scanFiles = {
     "moller_scan_hist_corrcoeff_cut_0p30.root",
     "moller_scan_hist_corrcoeff_cut_0p40.root",
@@ -40,19 +33,16 @@ void moller_scan_overlay() {
     "corrcoeff_cut = 0.60",
     "corrcoeff_cut = 0.70",
   };
-  // ---------------------------------------------
 
   gStyle->SetOptStat(0);
   gStyle->SetTitleFontSize(0.09);
 
   int npts = (int) scanFiles.size();
-
   std::vector<TFile*> files(npts, nullptr);
   for (int i = 0; i < npts; i++) {
     files[i] = TFile::Open(scanFiles[i], "READ");
     if (!files[i] || files[i]->IsZombie()) {
-      std::cerr << "Warning: could not open " << scanFiles[i]
-                << " -- that scan point will be skipped." << std::endl;
+      std::cerr << "Warning: could not open " << scanFiles[i] << std::endl;
       files[i] = nullptr;
     }
   }
@@ -60,14 +50,10 @@ void moller_scan_overlay() {
   const int palette[] = { kBlue+1, kRed+1, kGreen+2, kMagenta+1, kOrange+1, kCyan+2, kBlack, kGray+2 };
   const int npalette = sizeof(palette)/sizeof(palette[0]);
 
-  // Discover which (module, apv, axis) histograms exist, from the first
-  // scan file that opened -- all scan points come from the same run/event
-  // window (just a different DB parameter value), so they should all have
-  // the same set of APVs.
   TFile *reffile = nullptr;
   for (auto *f : files) if (f) { reffile = f; break; }
   if (!reffile) {
-    std::cerr << "None of the scan files could be opened -- nothing to overlay." << std::endl;
+    std::cerr << "None of the scan files could be opened." << std::endl;
     return;
   }
 
@@ -92,10 +78,7 @@ void moller_scan_overlay() {
   for (auto &kv : uApvsByMod) std::sort(kv.second.begin(), kv.second.end());
   for (auto &kv : vApvsByMod) std::sort(kv.second.begin(), kv.second.end());
 
-  std::cout << "Found " << mods.size() << " module(s) to overlay." << std::endl;
-
   TCanvas *c1 = new TCanvas("c1", "ADC vs sample, DB-parameter scan overlay", 1300, 500);
-
   c1->Print("moller_scan_overlay.pdf[");
 
   for (int imod : mods) {
@@ -115,24 +98,19 @@ void moller_scan_overlay() {
       c1->Clear();
       c1->Divide(ncols, 2);
 
-      // ---- top row: U ----
       for (size_t i = 0; i < uApvs.size(); i++) {
-
         c1->cd(i + 1);
-
         TLegend *leg = nullptr;
         if (i == 0) {
           leg = new TLegend(0.15, 0.60, 0.60, 0.88);
           leg->SetBorderSize(0);
           leg->SetTextSize(0.06);
         }
-
         bool first = true;
         for (int ip = 0; ip < npts; ip++) {
           if (!files[ip]) continue;
           TProfile *h = (TProfile*) files[ip]->Get(Form("h_ADC_vs_sample_mod%d_apv%d_U", imod, uApvs[i]));
           if (!h) continue;
-
           h->SetLineColor(palette[ip % npalette]);
           h->SetMarkerColor(palette[ip % npalette]);
           h->SetMarkerStyle(20);
@@ -145,17 +123,13 @@ void moller_scan_overlay() {
         if (leg) leg->Draw();
       }
 
-      // ---- bottom row: V ----
       for (size_t i = 0; i < vApvs.size(); i++) {
-
         c1->cd(ncols + i + 1);
-
         bool first = true;
         for (int ip = 0; ip < npts; ip++) {
           if (!files[ip]) continue;
           TProfile *h = (TProfile*) files[ip]->Get(Form("h_ADC_vs_sample_mod%d_apv%d_V", imod, vApvs[i]));
           if (!h) continue;
-
           h->SetLineColor(palette[ip % npalette]);
           h->SetMarkerColor(palette[ip % npalette]);
           h->SetMarkerStyle(21);
@@ -171,6 +145,5 @@ void moller_scan_overlay() {
   }
 
   c1->Print("moller_scan_overlay.pdf]");
-
   std::cout << "Overlay written to moller_scan_overlay.pdf" << std::endl;
 }

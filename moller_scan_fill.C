@@ -6,27 +6,11 @@
 #include "moller_fill_vectors.h"
 #include "moller_histograms.h"
 
-// ============================================================
-// Run once per replayed file in a database-parameter scan (see
-// moller_scan_corrcoeff.sh). Fills the same per-(module,APV)
-// ADC-vs-sample TProfiles as moller_plot.C, but for a single
-// specified input file, and writes them to a small standalone ROOT
-// file named after "tag" instead of drawing a PDF.
-//
-// moller_scan_overlay.C later opens every scan point's output file
-// and overlays the same-named histograms on top of each other.
-//
-//   infile : path to one replayed ROOT file (one scan point)
-//   tag    : label for this scan point, e.g. "corrcoeff_cut_0p50"
-//            (used only in the output filename -- histogram names
-//            inside stay identical across scan points on purpose,
-//            since each scan point lives in its own file)
-//
-// Note: this intentionally does NOT use the "rootfile" constant from
-// moller_config.h -- the input file is whatever moller_scan_corrcoeff.sh
-// passes in for this iteration.
-// ============================================================
-
+// Fills the per-(module,APV) ADC-vs-sample profiles for one replayed
+// file in a DB-parameter scan and writes them to moller_scan_hist_<tag>.root.
+// moller_scan_overlay.C later opens every scan point's file and overlays
+// them. Doesn't use moller_config.h's "rootfile" -- infile is whatever
+// moller_scan_corrcoeff.sh passes for this iteration.
 void moller_scan_fill(const char *infile, const char *tag) {
 
   TChain *C = new TChain("T");
