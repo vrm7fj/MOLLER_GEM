@@ -9,11 +9,23 @@ set -e
 # Usage: ./moller_scan_corrcoeff.sh <runnum>
 # Afterwards: paste the printed file list into moller_scan_overlay.C and run it.
 
+# run-replay_moller.sh exports OUT_DIR/MOLLER_REPLAY/etc, but it runs in
+# its own subprocess below ("bash $REPLAY_SCRIPT ..."), so none of that
+# reaches this script. Source the same setup here so OUT_DIR etc. are
+# genuinely set in THIS shell too -- keep this in sync if that script's
+# environment ever changes.
+source $HOME/local/analyzer-sbs6/bin/setup.sh
+export MOLLER=$HOME/moller-counting/install
+source $MOLLER/bin/mollerenv.sh
+export MOLLER_REPLAY=$HOME/moller-counting/moller-counting/MOLLER-replay
+export DB_DIR=$MOLLER_REPLAY/DB
+export OUT_DIR=$HOME/moller12gev/Rootfiles
+
 # ---- EDIT THESE ----
 SCAN_VALUES=(0.3 0.4 0.5 0.6 0.7)
 DB_KEY="corrcoeff_cut"          # or "corrcoeff_cut_deconv"
-DB_FILE="$MOLLER_REPLAY/DB/20230226/db_moller.uvagem.dat"
-REPLAY_SCRIPT="./run-replay_gep.sh"
+DB_FILE="$DB_DIR/20230226/db_moller.uvagem.dat"   # verify this path with: ls $DB_DIR
+REPLAY_SCRIPT="./run-replay_moller.sh"
 NEVENTS=10000
 FIRSTSEG=0
 MAXSEG=1
@@ -24,11 +36,6 @@ RUNNUM=$1
 
 if [ -z "$RUNNUM" ]; then
   echo "Usage: $0 <runnum>"
-  exit 1
-fi
-
-if [ -z "$OUT_DIR" ]; then
-  echo "OUT_DIR is not set -- source the same environment run-replay_gep.sh expects."
   exit 1
 fi
 
