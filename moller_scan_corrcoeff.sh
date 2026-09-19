@@ -25,7 +25,9 @@ set -e
 # moller_scan_overlay.C's scanFiles/scanLabels and run:
 #   root -l -b -q moller_scan_overlay.C
 #
-# Usage: ./moller_scan_corrcoeff.sh <runnum> <firstsegment> <maxsegments> <firstevent>
+# Usage: ./moller_scan_corrcoeff.sh <runnum>
+# (firstsegment/maxsegments/firstevent are fixed below -- this setup
+# always replays segment 0 only, starting at event 0)
 #
 ###########################################################################
 
@@ -48,15 +50,17 @@ REPLAY_SCRIPT="./run-replay_gep.sh"
 # Events per scan point:
 NEVENTS=10000
 
+# Fixed for this setup: always one segment, segment 0, starting at event 0.
+FIRSTSEG=0
+MAXSEG=1
+FIRSTEVENT=0
+
 # ====================================================================
 
 RUNNUM=$1
-FIRSTSEG=$2
-MAXSEG=$3
-FIRSTEVENT=$4
 
-if [ -z "$FIRSTEVENT" ]; then
-  echo "Usage: $0 <runnum> <firstsegment> <maxsegments> <firstevent>"
+if [ -z "$RUNNUM" ]; then
+  echo "Usage: $0 <runnum>"
   exit 1
 fi
 
