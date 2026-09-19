@@ -110,14 +110,28 @@ for VAL in "${SCAN_VALUES[@]}"; do
 
   root -l -b -q "moller_scan_fill.C(\"${DST}\", \"${TAG}\")"
 
+  # The replay output is only an intermediate -- its histograms are now in
+  # moller_scan_hist_${TAG}.root, so drop the (large) replayed rootfile.
+  rm -f "$DST"
+
   SCAN_ROOTFILES+=("moller_scan_hist_${TAG}.root")
   SCAN_LABELS+=("${DB_KEY} = ${VAL}")
 
 done
 
+MANIFEST="moller_scan_manifest.txt"
+: > "$MANIFEST"
+for i in "${!SCAN_ROOTFILES[@]}"; do
+  echo "${SCAN_ROOTFILES[$i]}|${SCAN_LABELS[$i]}" >> "$MANIFEST"
+done
+
 echo
-echo "Scan done. Per-point histogram files:"
-for f in "${SCAN_ROOTFILES[@]}"; do echo "  \"$f\","; done
+echo "Generating overlay plot..."
+root -l -b -q "moller_scan_overlay.C(\"${MANIFEST}\")"
+
+echo "Cleaning up per-point histogram files..."
+for f in "${SCAN_ROOTFILES[@]}"; do rm -f "$f"; done
+rm -f "$MANIFEST"
+
 echo
-echo "Paste those into moller_scan_overlay.C's scanFiles/scanLabels, then run:"
-echo "  root -l -b -q moller_scan_overlay.C"
+echo "Done. Overlay written to moller_scan_overlay.pdf"

@@ -11,13 +11,19 @@
 #include <set>
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
+#include <string>
 
 // Overlays the per-(module,APV) ADC-vs-sample curves from every scan
 // point (see moller_scan_corrcoeff.sh / moller_scan_fill.C), one color
-// per value, same 5x2 module/MPD layout as moller_plot.C. Edit
-// scanFiles/scanLabels to match your scan -- the shell script prints
-// the list to paste in.
-void moller_scan_overlay() {
+// per value, same 5x2 module/MPD layout as moller_plot.C.
+//
+// manifest: path to a text file with one "<rootfile>|<label>" line per
+// scan point. moller_scan_corrcoeff.sh writes this and passes it in
+// automatically. Leave blank to fall back to the hardcoded scanFiles/
+// scanLabels below, e.g. for standalone re-plotting:
+//   root -l -b -q moller_scan_overlay.C
+void moller_scan_overlay(const char *manifest = "") {
 
   std::vector<TString> scanFiles = {
     "moller_scan_hist_corrcoeff_cut_0p30.root",
@@ -33,6 +39,25 @@ void moller_scan_overlay() {
     "corrcoeff_cut = 0.60",
     "corrcoeff_cut = 0.70",
   };
+
+  if (manifest && manifest[0]) {
+    std::ifstream in(manifest);
+    if (!in) {
+      std::cerr << "ERROR: could not open manifest file: " << manifest << std::endl;
+      return;
+    }
+    scanFiles.clear();
+    scanLabels.clear();
+    std::string line;
+    while (std::getline(in, line)) {
+      if (line.empty()) continue;
+      size_t bar = line.find('|');
+      if (bar == std::string::npos) continue;
+      scanFiles.push_back(line.substr(0, bar));
+      scanLabels.push_back(line.substr(bar + 1));
+    }
+    std::cout << "Loaded " << scanFiles.size() << " scan point(s) from " << manifest << std::endl;
+  }
 
   gStyle->SetOptStat(0);
   gStyle->SetTitleFontSize(0.09);
