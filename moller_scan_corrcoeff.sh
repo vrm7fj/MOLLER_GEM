@@ -30,6 +30,11 @@ NEVENTS=10000
 FIRSTSEG=0
 MAXSEG=1
 FIRSTEVENT=0
+# Where the replay output might land -- run-replay_moller.sh has been
+# edited locally before and its output dir can drift out of sync with
+# $OUT_DIR above, so we search these instead of trusting one hardcoded
+# path. Add more if the replay still isn't found.
+CANDIDATE_DIRS=("." "outdir/Rootfiles" "$OUT_DIR" "$HOME/moller12gev/Rootfiles")
 # ---------------------
 
 RUNNUM=$1
@@ -62,6 +67,8 @@ trap cleanup EXIT
 SCAN_ROOTFILES=()
 SCAN_LABELS=()
 
+FNAME="moller_uvagem_replayed_${RUNNUM}_seg${FIRSTSEG}_${MAXSEG}.root"
+
 for VAL in "${SCAN_VALUES[@]}"; do
 
   echo "=== Scan point: moller.uvagem.${DB_KEY} = ${VAL} ==="
@@ -69,16 +76,34 @@ for VAL in "${SCAN_VALUES[@]}"; do
   sed -i -E "s|^([[:space:]]*moller\.uvagem\.${DB_KEY}[[:space:]]*=[[:space:]]*)[^[:space:]#]+|\1${VAL}|" "$DB_FILE"
   echo -n "  -> "; grep "moller\.uvagem\.${DB_KEY}[[:space:]]*=" "$DB_FILE"
 
+  MARKER=$(mktemp)
+
   bash "$REPLAY_SCRIPT" "$RUNNUM" "$FIRSTSEG" "$MAXSEG" "$FIRSTEVENT" "$NEVENTS"
 
-  SRC="$OUT_DIR/moller_uvagem_replayed_${RUNNUM}_seg${FIRSTSEG}_${MAXSEG}.root"
-  TAG="${DB_KEY}_$(echo "$VAL" | tr '.' 'p')"
-  DST="$OUT_DIR/moller_uvagem_replayed_${RUNNUM}_${TAG}.root"
+  # Find the file the replay just wrote, wherever it landed, rather than
+  # assuming a fixed path -- it must be newer than MARKER (created before
+  # the replay ran) to avoid picking up a stale file of the same name.
+  SRC=""
+  for d in "${CANDIDATE_DIRS[@]}"; do
+    if [ -f "$d/$FNAME" ] && [ "$d/$FNAME" -nt "$MARKER" ]; then
+      SRC="$d/$FNAME"
+      break
+    fi
+  done
+  if [ -z "$SRC" ]; then
+    SRC=$(find "$HOME" -maxdepth 6 -name "$FNAME" -newer "$MARKER" 2>/dev/null | head -1)
+  fi
 
-  if [ ! -f "$SRC" ]; then
-    echo "ERROR: expected replay output not found: $SRC"
+  rm -f "$MARKER"
+
+  if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
+    echo "ERROR: could not find replay output ($FNAME) in any of: ${CANDIDATE_DIRS[*]}, or under \$HOME"
     exit 1
   fi
+  echo "Found replay output: $SRC"
+
+  TAG="${DB_KEY}_$(echo "$VAL" | tr '.' 'p')"
+  DST="$(dirname "$SRC")/moller_uvagem_replayed_${RUNNUM}_${TAG}.root"
 
   mv "$SRC" "$DST"
   echo "Saved replay output: $DST"
